@@ -1,5 +1,8 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"></head><body>
 <title>Mindspace</title>
 <meta name="claude:viewport-fit-sides" content="cover">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
 <style>
@@ -36,6 +39,7 @@ button{font:inherit;color:inherit;border:0;background:none;padding:0;cursor:poin
 input,select,textarea{font:inherit;color:inherit}
 h1,h2,h3,p{margin:0}
 :focus-visible{outline:2px solid var(--pri);outline-offset:2px}
+html,body{touch-action:pan-x pan-y;-webkit-text-size-adjust:100%;overscroll-behavior:none}
 #app{height:100%;display:flex;justify-content:center;background:var(--bg)}
 .phone{position:relative;width:100%;max-width:430px;height:100%;background:var(--bg);overflow:hidden;display:flex;flex-direction:column}
 @media(min-width:520px){
@@ -372,7 +376,7 @@ const catCol=id=>{const c=cat(id);return c?gcol(c.group):'#8d9198'};
 
 /* ---------- derived: time, score, streak, coins ---------- */
 function runSeg(){const r=S.running;if(!r)return null;if(r.mode==='sw')return{start:r.start};if(r.phase==='focus'&&!r.waiting)return{start:r.segStart};return null}
-function entriesOn(k,live=true){const a=S.entries.filter(e=>dk(e.start)===k);const s=runSeg();if(live&&s&&dk(s.start)===k)a.push({id:'live',catId:S.running.catId,start:s.start,end:Date.now(),live:true});return a}
+function entriesOn(k,live=true){const a=S.entries.filter(e=>dk(e.start)===k);const s=runSeg();if(live&&s&&dk(s.start)===k)a.push({id:'live',catId:S.running.catId,start:s.start,end:S.running.pausedAt||Date.now(),live:true});return a}
 const mins=e=>Math.max(0,(e.end-e.start)/6e4);
 const grpMin=(k,g,live=true)=>entriesOn(k,live).filter(e=>(cat(e.catId)||{}).group===g).reduce((a,e)=>a+mins(e),0);
 const trackedMin=(k,live=true)=>entriesOn(k,live).reduce((a,e)=>a+mins(e),0);
@@ -431,7 +435,7 @@ function checkNotes(){
  if(now.getHours()>=18&&!S.checkins.some(c=>dk(c.ts)===k))addNote('rem','No wellbeing check-in yet today.','nochk-'+k);
  if(S.studyTarget>0&&grpMin(k,'Study')>=S.studyTarget)addNote('prog','Study goal reached. Excellent focus.','study-'+k);
  const st=streak();[7,14,30,50,100].forEach(n=>{if(st>=n)addNote('prog',n+'-day streak. Keep it up.','streak-'+n)});
- if(S.running&&Date.now()-S.running.start>((S.cfg&&S.cfg.overrun)||6)*36e5)addNote('imp','Your timer ran over 6 hours. Stop it if you forgot.','run-'+S.running.start)}
+ if(S.running&&!S.running.pausedAt&&Date.now()-S.running.start>((S.cfg&&S.cfg.overrun)||6)*36e5)addNote('imp','Your timer ran over 6 hours. Stop it if you forgot.','run-'+S.running.start)}
 
 /* ---------- mood colour helpers ---------- */
 const mIdx=v=>v==null?null:v<2.5?0:v<4.5?1:v<6.5?2:v<8.5?3:4;
@@ -514,7 +518,7 @@ function startRun(catId,mode){const now=Date.now();S.lastCat=catId;
 function saveSeg(r,start,end){if(end-start<((S.cfg&&S.cfg.minSess)?S.cfg.minSess*60000:30000))return null;const e={id:uid(),catId:r.catId,start,end,src:'timer'};S.entries.push(e);save();return e}
 function askFocus(e){if(e&&cfgOn('rateFocus')&&(cat(e.catId)||{}).group==='Study'&&mins(e)>=5)openSheet('focus',{id:e.id})}
 function stopRun(){const r=S.running;if(!r)return;let e=null;
- if(r.mode==='sw')e=saveSeg(r,r.start,Date.now());else if(r.phase==='focus'&&!r.waiting)e=saveSeg(r,r.segStart,Date.now());
+ const nowE=r.pausedAt||Date.now();if(r.mode==='sw')e=saveSeg(r,r.start,nowE);else if(r.phase==='focus'&&!r.waiting)e=saveSeg(r,r.segStart,nowE);
  S.running=null;save();render();checkNotes();if(e){toast('Saved '+fmtD(mins(e))+' · '+catLabel(e.catId));askFocus(e)}}
 function phaseEnd(){const r=S.running;if(!r||r.mode!=='pomo'||r.waiting)return;const end=r.phaseStart+r.dur;let e=null;
  if(r.phase==='focus'){e=saveSeg(r,r.segStart,end);const long=r.block%S.settings.blocks===0;r.next=long?'long':'short'}else r.next='focus';
@@ -524,14 +528,16 @@ function nextPhase(){const r=S.running;if(!r||!r.waiting)return;const now=Date.n
  if(nx==='focus'){r.block=r.phase==='long'?1:r.block+1;r.phase='focus';r.dur=S.settings.focus*6e4;r.segStart=now}
  else{r.phase=nx;r.dur=(nx==='long'?S.settings.long:S.settings.short)*6e4}
  r.phaseStart=now;r.waiting=false;save();render()}
-function runText(){const r=S.running;if(!r)return '00:00:00';const now=Date.now();
+function pauseRun(){const r=S.running;if(!r||r.pausedAt||r.waiting)return;r.pausedAt=Date.now();save();render()}
+function resumeRun(){const r=S.running;if(!r||!r.pausedAt)return;const d=Date.now()-r.pausedAt;r.start+=d;if(r.phaseStart)r.phaseStart+=d;if(r.segStart)r.segStart+=d;delete r.pausedAt;save();render()}
+function runText(){const r=S.running;if(!r)return '00:00:00';const now=r.pausedAt||Date.now();
  if(r.mode==='sw'){const s=Math.floor((now-r.start)/1e3),h=Math.floor(s/3600),m=Math.floor(s%3600/60);return String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
  const left=r.waiting?0:Math.max(0,Math.ceil((r.phaseStart+r.dur-now)/1e3));return String(Math.floor(left/60)).padStart(2,'0')+':'+String(left%60).padStart(2,'0')}
 function tick(force){
  const r=S.running;
- if(r&&r.mode==='pomo'&&!r.waiting&&Date.now()>=r.phaseStart+r.dur){phaseEnd();return}
+ if(r&&r.mode==='pomo'&&!r.waiting&&!r.pausedAt&&Date.now()>=r.phaseStart+r.dur){phaseEnd();return}
  $$('[data-t="run"]').forEach(e=>{e.textContent=runText()});
- $$('[data-t="runbar"]').forEach(e=>{if(r&&r.mode==='pomo'&&!r.waiting)e.style.width=(100*(Date.now()-r.phaseStart)/r.dur).toFixed(1)+'%'});
+ $$('[data-t="runbar"]').forEach(e=>{if(r&&r.mode==='pomo'&&!r.waiting)e.style.width=(100*((r.pausedAt||Date.now())-r.phaseStart)/r.dur).toFixed(1)+'%'});
  if(!force&&S.tab==='home'&&!R.page&&r&&Math.floor(Date.now()/1e3)%30===0&&R.sel===today()){/* keep home score live */const sc=$('[data-t="score"]');if(sc)sc.innerHTML=scoreCard(R.sel)}}
 /* ===== Home, score, tasks slot, coins, streak, notifications, profile, history ===== */
 function ringSvg(p,size,sw,col,inner){const r=(size-sw)/2,c=2*Math.PI*r,h=size/2;
@@ -760,9 +766,10 @@ function timerCard(){const r=S.running,mode=r?(r.mode==='pomo'?'pomo':'sw'):(S.t
  if(r){clock=runText();
   if(r.mode==='pomo'){bar=`<div class="bar gap"><i data-t="runbar" style="width:${r.waiting?100:(100*(Date.now()-r.phaseStart)/r.dur).toFixed(1)}%"></i></div>`;
    if(r.waiting)btn=`<button class="btn" data-a="nextPhase">Start ${r.next==='focus'?'next focus block':r.next==='long'?'long break':'short break'}</button>`}
-  btn+=`<button class="btn dng ${btn?'gap':''}" data-a="stop">Stop and save</button>`}
+  if(!r.waiting)btn+=`<button class="btn ${btn?'gap':''}" data-a="${r.pausedAt?'resume':'pause'}">${r.pausedAt?'Resume':'Pause'}</button>`;
+  btn+=`<button class="btn dng gap" data-a="stop">Stop and save</button>`}
  else{clock=mode==='pomo'?String(S.settings.focus).padStart(2,'0')+':00':'00:00:00';btn=`<button class="btn" data-a="start">Start</button>`}
- const lab=r?(r.mode==='pomo'?(r.waiting?'Ready':r.phase==='focus'?'Focus · block '+r.block:'Break'):'Running'):(mode==='pomo'?'Pomodoro ready':'Stopwatch ready');
+ const lab=r?(r.pausedAt?'Paused':r.mode==='pomo'?(r.waiting?'Ready':r.phase==='focus'?'Focus · block '+r.block:'Break'):'Running'):(mode==='pomo'?'Pomodoro ready':'Stopwatch ready');
  return `<div class="card"><div class="seg sm" style="${r?'opacity:.5;pointer-events:none':''}"><button class="${mode==='sw'?'on':''}" data-a="tmode" data-v="sw">Stopwatch</button><button class="${mode==='pomo'?'on':''}" data-a="tmode" data-v="pomo">Pomodoro</button></div>
  <div class="gap2">${catPicker('home-cat',sel,{cb:'homeCat',off:!!r})}</div>
  <div class="eyebrow center gap2">${esc(lab)}</div><div class="runbig center" data-t="run" style="margin-top:6px">${clock}</div>${bar}<div class="gap2">${btn}</div>
@@ -773,14 +780,15 @@ A.homeCat=el=>{R.selCat=el.dataset.val;render()};
 function ctile(c,run){const k=dk(today()),m=catMin(k,c.id),g=c.goal||0,live=run&&run.catId===c.id;
  return `<button class="ctile ${live?'live':''}" style="--cc:${gcol(c.group)}" ${R.catEdit?`data-a="sheet" data-s="catedit" data-q='{"id":"${c.id}"}'`:`data-a="catgo" data-v="${c.id}"`} aria-label="${esc(c.name)}${live?', running, tap to stop':', tap to start'}"><span class="cn">${esc(c.name)}</span><b ${live?'data-t="run"':''}>${live?runText():(m?fmtH(m):'–')}</b><small>${R.catEdit?'Edit':live?'Tap to stop':m?'today · tap to start':'Tap to start'}</small>${g?`<span class="gb"><i style="width:${Math.min(100,m/g*100)}%"></i></span>`:''}</button>`}
 function trackView(){const run=S.running;
- const strip=run?`<div class="card row runstrip"><div><div class="eyebrow" style="margin:0">${run.mode==='pomo'?'Pomodoro':'Tracking'} · ${esc(catLabel(run.catId))}</div><div class="runbig" data-t="run" style="font-size:34px;margin-top:6px">${runText()}</div></div><button class="btn dng sm" data-a="stop">Stop</button></div>`:'';
+ const strip=run?`<div class="card row runstrip"><div><div class="eyebrow" style="margin:0">${run.pausedAt?'Paused':run.mode==='pomo'?'Pomodoro':'Tracking'} · ${esc(catLabel(run.catId))}</div><div class="runbig" data-t="run" style="font-size:34px;margin-top:6px">${runText()}</div></div><div class="btns" style="gap:8px;flex:none">${run.waiting?'':`<button class="btn sm sec" data-a="${run.pausedAt?'resume':'pause'}">${run.pausedAt?'Resume':'Pause'}</button>`}<button class="btn dng sm" data-a="stop">Stop</button></div></div>`:'';
  const groups=GROUPS.map(g=>{const cs=S.cats.filter(c=>c.group===g.id);const tot=grpMin(dk(today()),g.id);return `<div class="cg"><div class="row cgh"><span class="grp" style="color:${g.c};margin:0">${g.id}</span><span class="muted small">${tot?fmtH(tot)+' today':''}</span></div><div class="ctiles">${cs.map(c=>ctile(c,run)).join('')}</div></div>`}).join('');
  return studyCard()+strip+`<div class="card"><div class="row"><h3 style="margin:0">Activities</h3><button class="link small" data-a="catedit">${R.catEdit?'Done':'Edit'}</button></div><p class="muted small" style="margin:6px 0 0">${R.catEdit?'Tap an activity to rename or delete it.':run?'Tap another activity to switch, or the running one to stop.':'Tap an activity to start tracking right away.'}</p>${groups}<div class="btns eq gap2"><button class="btn sec" data-a="sheet" data-s="newcat">${I.plus} New activity</button><button class="btn sec" data-a="sheet" data-s="logtime" data-q='{"day":${today()}}'>${I.plus} Log manually</button></div></div>`}
 A.catgo=el=>{const id=el.dataset.v,r=S.running;R.selCat=id;
  if(r&&r.catId===id){stopRun();return}
+ if(r&&r.pausedAt){toast('Another activity is paused. Resume or stop it first.');return}
  const m=r?r.mode:(S.tmode||'sw');if(r)stopRun();startRun(id,m);toast('Tracking '+catLabel(id))};
 A.tmode=el=>{S.tmode=el.dataset.v;save();render()};A.catedit=()=>{R.catEdit=!R.catEdit;render()};
-A.start=()=>{if(S.running)return;startRun(R.selCat,S.tmode||'sw')};A.nextPhase=()=>nextPhase();
+A.pause=()=>pauseRun();A.resume=()=>resumeRun();A.start=()=>{if(S.running)return;startRun(R.selCat,S.tmode||'sw')};A.nextPhase=()=>nextPhase();
 
 /* ----- plan ----- */
 const HH=56,H0=5,H1=24;
@@ -1381,4 +1389,4 @@ $('#pg').innerHTML='<div class="card sk" aria-hidden="true"><i></i><i></i><i cla
 let _booted=false;const boot=()=>{if(_booted)return;_booted=true;runFirewood();checkNotes();render(true);lockNow();try{_sig=sigNow()}catch(e){}};
 Promise.race([document.fonts?document.fonts.ready:0,new Promise(r=>setTimeout(r,450))]).then(boot,boot);setTimeout(boot,900);
 setInterval(()=>tick(),1000);setInterval(checkNotes,60000);
-</script>
+</script></body></html>
